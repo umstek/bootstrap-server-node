@@ -1,0 +1,23 @@
+{
+  "name": "bootstrap-server-node",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "license": "MIT",
+  "scripts": {
+    "prestart": "yarn clean",
+    "start": "ts-node --project tsconfig.json src/index.ts",
+    "prebuild": "yarn clean",
+    "build": "tsc",
+    "clean": "rm -rf build"
+  },
+  "devDependencies": {
+    "ts-node": "^7.0.1",
+    "tslint": "^5.12.0",
+    "typescript": "^3.2.2"
+  },
+  "dependencies": {
+    "immutable": "^4.0.0-rc.12",
+    "ix": "^2.4.3",
+    "rxjs": "^6.3.3"
+  }
+}
