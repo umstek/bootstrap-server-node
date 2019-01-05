@@ -1,30 +1,7 @@
 import * as net from "net";
 import * as rx from "rxjs";
-import { map, flatMap, scan, tap } from "rxjs/operators";
+import { map, flatMap, scan, tap, filter } from "rxjs/operators";
 import { OrderedMap } from "immutable";
-
-const server = net.createServer({ allowHalfOpen: true });
-
-server.on("listening", () => {
-  console.log("Server started: ");
-  console.log(server.address());
-});
-server.on("error", error => console.error(error.message));
-server.on("close", () => {
-  console.log("Server closed: ");
-  console.log(server.address());
-});
-
-const socket$ = rx.fromEvent(server, "connection") as rx.Observable<net.Socket>;
-const text$ = socket$.pipe(
-  tap(() => console.log("----------")),
-  tap(socket => console.log(socket.address())),
-  flatMap(socket =>
-    (rx.fromEvent(socket, "data") as rx.Observable<Buffer | string>).pipe(
-      map(data => ({ data: data.toString(), socket }))
-    )
-  )
-);
 
 enum RequestType {
   INVALID = "INVALID",
@@ -66,19 +43,20 @@ function parseRequestString(text: string): IRequest {
 }
 
 enum PeerStatus {
-  REGISTERED = "REGISTERED",
-  UNREGISTERED = "UNREGISTERED",
-  EXISTING = "EXISTING",
-  NONEXISTING = "NONEXISTING",
-  INVALID = "INVALID",
-  NONE = "NONE"
+  REGISTERED = "REGISTERED", // Successfully registered
+  UNREGISTERED = "UNREGISTERED", // Successfully unregistered
+  EXISTING = "EXISTING", // Cannot register: already exists
+  NONEXISTING = "NONEXISTING", // Cannot unregister: does not exist
+  INVALID = "INVALID", // Invalid request pass-through
+  NONE = "NONE" // Used by the initial state of peerTable reducer
 }
 
-type PeerTable = OrderedMap<string, { host: string; port: number }>;
+type Peer = { host: string; port: number };
+type PeerTable = OrderedMap<string, Peer>;
 
 function updatePeerTable(
   {
-    peerTable: oldPeerTable
+    peerTable
   }: {
     status: PeerStatus;
     peerTable: PeerTable;
@@ -86,55 +64,39 @@ function updatePeerTable(
   },
   { request, socket }: { request: IRequest; socket: net.Socket }
 ) {
+  const result = { status: PeerStatus.NONE, peerTable, socket };
+
   switch (request.type) {
     case RequestType.REG:
-      if (oldPeerTable.has(request.username)) {
-        return { peerTable: oldPeerTable, status: PeerStatus.EXISTING, socket };
+      if (peerTable.has(request.username)) {
+        result.status = PeerStatus.EXISTING;
+        break;
       }
-      return {
-        peerTable: oldPeerTable.set(request.username, {
-          host: request.host,
-          port: request.port
-        }),
-        status: PeerStatus.REGISTERED,
-        socket
-      };
+
+      result.peerTable = peerTable.set(request.username, {
+        host: request.host,
+        port: request.port
+      });
+      result.status = PeerStatus.REGISTERED;
+      break;
 
     case RequestType.UNREG:
-      if (!oldPeerTable.has(request.username)) {
-        return {
-          peerTable: oldPeerTable,
-          status: PeerStatus.NONEXISTING,
-          socket
-        };
+      if (!peerTable.has(request.username)) {
+        result.status = PeerStatus.NONEXISTING;
+        break;
       }
-      return {
-        peerTable: oldPeerTable.delete(request.username),
-        status: PeerStatus.UNREGISTERED,
-        socket
-      };
+
+      result.peerTable = peerTable.delete(request.username);
+      result.status = PeerStatus.UNREGISTERED;
+      break;
 
     default:
-      return {
-        peerTable: oldPeerTable,
-        status: PeerStatus.INVALID,
-        socket
-      };
+      result.status = PeerStatus.INVALID;
+      break;
   }
-}
 
-const request$ = text$.pipe(
-  tap(({ data }) => console.log(data)),
-  map(({ data, socket }) => ({ request: parseRequestString(data), socket }))
-);
-const peerTable$ = request$.pipe(
-  tap(({ request }) => console.log(request)),
-  scan(updatePeerTable, {
-    status: PeerStatus.NONE,
-    socket: undefined,
-    peerTable: OrderedMap() as PeerTable
-  })
-);
+  return result;
+}
 
 function composeMessage({
   status,
@@ -180,15 +142,6 @@ function composeMessage({
   }
 }
 
-const response$ = peerTable$.pipe(
-  tap(({ status, peerTable }) =>
-    console.log(
-      `${status} ${peerTable.map(({ host, port }) => `${host}:${port}`).join()}`
-    )
-  ),
-  map(composeMessage)
-);
-
 function sendReply({
   socket,
   response
@@ -200,8 +153,49 @@ function sendReply({
   socket.end();
 }
 
+const server = net.createServer({ allowHalfOpen: true });
+
+server.on("listening", () => {
+  console.log("Server started: ");
+  console.log(server.address());
+});
+server.on("error", error => console.error(error.message));
+server.on("close", () => {
+  console.log("Server closed: ");
+  console.log(server.address());
+});
+
 server.listen(9000);
 
-response$
-  .pipe(tap(({ response }) => console.log(response)))
-  .subscribe(sendReply);
+const socket$ = rx.fromEvent(server, "connection") as rx.Observable<net.Socket>;
+const response$ = socket$.pipe(
+  flatMap(socket =>
+    (rx.fromEvent(socket, "data") as rx.Observable<Buffer | string>).pipe(
+      map(data => ({ data: data.toString(), socket }))
+    )
+  ),
+
+  map(({ data, socket }) => ({ request: parseRequestString(data), socket })),
+
+  scan(updatePeerTable, {
+    status: PeerStatus.NONE,
+    socket: undefined,
+    peerTable: OrderedMap() as PeerTable
+  }),
+
+  map(composeMessage),
+
+  filter(({ response }) => Boolean(response)),
+
+  tap(({ socket, response }) =>
+    console.log(
+      `\x1b[0m\x1b[32m${socket.localAddress}:${
+        socket.localPort
+      }\x1b[0m sent \x1b[34m${response}\x1b[0m to \x1b[32m${
+        socket.remoteAddress
+      }:${socket.remotePort}\x1b[0m`
+    )
+  )
+);
+
+const subscription = response$.subscribe(sendReply);
