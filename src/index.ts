@@ -165,7 +165,10 @@ server.on("close", () => {
   console.log(server.address());
 });
 
-server.listen(9000);
+const localPort = Number(process.argv[2]);
+server.listen(
+  isNaN(localPort) || localPort < 1024 || localPort > 65535 ? 5000 : localPort
+);
 
 const socket$ = rx.fromEvent(server, "connection") as rx.Observable<net.Socket>;
 const response$ = socket$.pipe(
