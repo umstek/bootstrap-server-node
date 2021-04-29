@@ -18,6 +18,6 @@
   },
   "dependencies": {
     "immutable": "^4.0.0-rc.12",
-    "rxjs": "^6.3.3"
+    "rxjs": "^7.0.0"
   }
 }
