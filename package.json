@@ -17,7 +17,7 @@
     "typescript": "4.4.3"
   },
   "dependencies": {
-    "immutable": "^4.0.0-rc.12",
+    "immutable": "^5.0.0",
     "rxjs": "^7.1.0"
   }
 }
